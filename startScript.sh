@@ -1,80 +1,76 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-# create directory for Delve logs, we use it to know that Delve
-# debugger is running
-mkdir -p /tmp/dlv_log
-
-runServer() {
-  echo Running server
-
-  # create directory and file to
-
-  touch /tmp/dlv_log/output.log
-
-  # run server with debug
-  dlv --listen=:40000 --headless=true --api-version=2 exec \
-   /server | tee -a /tmp/dlv_log/output.log &
-
-  # wait for Delve to modify log files - means /server is alreday run
-  inotifywait -e MODIFY /tmp/dlv_log/output.log &>/dev/null
-
-  echo Delve PID: $(pidof dlv), Server PID: $(pidof server)
-  pidof dlv > /tmp/dlv.pid
-  pidof server > /tmp/server.pid
-}
-
-killRunningServer() {
-  if [ -f /tmp/dlv.pid ]
-  then
-    echo killing old Delve, PID: $(cat /tmp/dlv.pid)
-    kill $(cat /tmp/dlv.pid)
-    rm -f /tmp/dlv.pid
-  fi
-
-  if [ -f /tmp/server.pid ]
-  then
-    echo killing old server, PID: $(cat /tmp/server.pid)
-    kill $(cat /tmp/server.pid)
-    rm -f /tmp/server.pid
-  fi
+log() {
+  echo "STARTSCRIPT: $1"
 }
 
 buildServer() {
-  echo Building server
-  go build -gcflags "all=-N -l" -o /server .playground/main.go
+  log "Building server binary"
+  go build -gcflags "all=-N -l" -o /server main.go
 }
 
-rerunServer () {
-  killRunningServer
+runServer() {
+  log "Run server"
+
+  log "Killing old server"
+  killall dlv
+  killall server
+  log "Run in debug mode"
+  dlv --listen=:40000 --headless=true --api-version=2 --accept-multiclient exec /server &
+}
+
+rerunServer() {
+  log "Rerun server"
   buildServer
   runServer
 }
 
-lockBuild() {
-  # check lock file existence
-  if [ -f /tmp/server.lock ]
-  then
-    # waiting for the file to delete
-    inotifywait -e DELETE /tmp/server.lock
-  fi
-  touch /tmp/server.lock
-}
-
-unlockBuild() {
-  # remove lock file
-  rm -f /tmp/server.lock
-}
-
-# run the server for the first time
-runServer
-
-inotifywait -e MODIFY -r -m /build |
-  while read path action file; do
-    lockBuild
+liveReloading() {
+  log "Run liveReloading"
+  inotifywait -e "MODIFY,DELETE,MOVED_TO,MOVED_FROM" -m -r --include '.go$' /build | (
+    # read changes from inotify, batch results to a second (read -t 1)
+    while true; do
+      read path action file
       ext=${file: -3}
       if [[ "$ext" == ".go" ]]; then
-        echo File changed: $file
-        rerunServer
+        echo "$file"
       fi
-    unlockBuild
-  done
+    done
+  ) | (
+    WAITING=""
+    while true; do
+      file=""
+      read -t 1 file
+      if test -z "$file"; then
+        if test ! -z "$WAITING"; then
+          echo "CHANGED"
+          WAITING=""
+        fi
+      else
+        log "File ${file} changed" >>/tmp/filechanges.log
+        WAITING=1
+      fi
+    done
+  ) | (
+    # read statement release when some file has been changed
+    while true; do
+      read TMP
+      log "File Changed. Reloading..."
+      rerunServer
+    done
+  )
+}
+
+initializeFileChangeLogger() {
+  echo "" > /tmp/filechanges.log
+  tail -f /tmp/filechanges.log &
+}
+
+main() {
+  initializeFileChangeLogger
+  buildServer
+  runServer
+  liveReloading
+}
+
+main

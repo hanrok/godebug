@@ -12,16 +12,6 @@ Build the micro-service example
 docker build -t godebug .
 ```
 
-Build the micro-service example
-```shell script
-docker build -t godebug .
-```
-
-Build the micro-service example
-```shell script
-docker build -t godebug .
-```
-
 Run the service
 ```shell script
 docker run --rm -v $PWD:/build -p8080:8080 -p40000:40000 godebug

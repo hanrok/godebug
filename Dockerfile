@@ -10,9 +10,7 @@ WORKDIR /build/
 RUN go get github.com/derekparker/delve/cmd/dlv
 
 # build micro-service binary
-COPY main.go /build/.playground/main.go
+COPY main.go /build/main.go
 COPY startScript.sh /build/startScript.sh
 
-RUN go build -gcflags "all=-N -l" -o /server .playground/main.go
-
-ENTRYPOINT sh /build/startScript.sh
+ENTRYPOINT sh startScript.sh
